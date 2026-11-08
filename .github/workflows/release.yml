@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Create release from release/*.jar
         env:
@@ -32,12 +34,16 @@ jobs:
           unzip -p "$jar" fabric.mod.json | grep -q '"id": *"novaclient"'
           unzip -p "$jar" fabric.mod.json | grep -q "\"version\": *\"$version\""
           if gh release view "$tag" --json isDraft -q .isDraft >/tmp/draft 2>/dev/null; then
-            if [ "$(cat /tmp/draft)" = "false" ] && git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            git fetch -q --tags --force origin || true
+            if [ "$(cat /tmp/draft)" = "false" ] && git rev-parse -q --verify "refs/tags/$tag" >/dev/null \
+               && git merge-base --is-ancestor "refs/tags/$tag" HEAD; then
               echo "Release $tag already exists - nothing to do"
               exit 0
             fi
-            # a leftover release whose tag is gone (turned into a draft): replace it
+            # the release is a draft, or its tag points at a commit that is no longer in the
+            # history (history was rewritten): make it again on the current commit
             gh release delete "$tag" --yes --cleanup-tag || true
+            git push origin ":refs/tags/$tag" || true
           fi
           title="Dih Client $version"
           if [ -f release/TITLE.txt ]; then title="$(cat release/TITLE.txt)"; fi
