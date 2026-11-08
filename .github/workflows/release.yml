@@ -1,0 +1,46 @@
+# Publishes a GitHub Release whenever a new Dih Client jar is pushed into release/.
+# Dih Client's auto-updater downloads the jar from the latest release.
+name: Publish release
+
+on:
+  push:
+    branches: [main]
+    paths: ["release/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create release from release/*.jar
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          jar=$(ls release/dih-client-*.jar | sort -V | tail -n 1)
+          name=$(basename "$jar")
+          version=${name#dih-client-}
+          version=${version%%+*}
+          version=${version%.jar}
+          tag="v$version"
+          # the jar must really be Dih Client with this version
+          unzip -p "$jar" fabric.mod.json | grep -q '"id": *"novaclient"'
+          unzip -p "$jar" fabric.mod.json | grep -q "\"version\": *\"$version\""
+          if gh release view "$tag" --json isDraft -q .isDraft >/tmp/draft 2>/dev/null; then
+            if [ "$(cat /tmp/draft)" = "false" ] && git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "Release $tag already exists - nothing to do"
+              exit 0
+            fi
+            # a leftover release whose tag is gone (turned into a draft): replace it
+            gh release delete "$tag" --yes --cleanup-tag || true
+          fi
+          title="Dih Client $version"
+          if [ -f release/TITLE.txt ]; then title="$(cat release/TITLE.txt)"; fi
+          notes=release/NOTES.md
+          [ -f "$notes" ] || { echo "Dih Client $version" > /tmp/notes.md; notes=/tmp/notes.md; }
+          gh release create "$tag" "$jar" --target "$GITHUB_SHA" --title "$title" --notes-file "$notes" --latest
